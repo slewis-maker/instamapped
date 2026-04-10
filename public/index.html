@@ -1,1 +1,912 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>InstaMapped</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.css"/>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.js"></script>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
 
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Roboto, sans-serif;
+  background: #f5f5f7;
+  color: #1d1d1f;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Header ── */
+header {
+  background: rgba(255,255,255,0.82);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border-bottom: 1px solid rgba(0,0,0,0.08);
+  padding: 10px 20px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  position: sticky;
+  top: 0;
+  z-index: 1000;
+}
+
+.logo {
+  font-size: 20px;
+  font-weight: 800;
+  white-space: nowrap;
+  background: linear-gradient(45deg,#f09433,#e6683c,#dc2743,#cc2366,#bc1888);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  letter-spacing: -0.3px;
+}
+.logo span { font-weight: 300; }
+
+.search-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  max-width: 400px;
+  background: rgba(0,0,0,0.055);
+  border-radius: 100px;
+  padding: 2px 4px 2px 14px;
+  transition: box-shadow 0.2s, background 0.2s;
+}
+.search-wrap:focus-within {
+  background: white;
+  box-shadow: 0 0 0 4px rgba(220,39,67,0.12), 0 2px 8px rgba(0,0,0,0.08);
+}
+.at { font-size: 15px; color: #a1a1a6; font-weight: 400; }
+.search-wrap input {
+  flex: 1;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 14px;
+  color: #1d1d1f;
+  padding: 7px 0;
+}
+.search-wrap input::placeholder { color: #a1a1a6; }
+
+.btn-primary {
+  background: linear-gradient(45deg,#f09433,#e6683c,#dc2743,#cc2366,#bc1888);
+  color: #fff;
+  border: none;
+  border-radius: 100px;
+  padding: 8px 18px;
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: opacity 0.2s, transform 0.1s;
+  flex-shrink: 0;
+}
+.btn-primary:hover { opacity: 0.88; }
+.btn-primary:active { transform: scale(0.97); }
+.btn-primary:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+
+.stats-badge {
+  background: rgba(0,0,0,0.055);
+  border-radius: 100px;
+  padding: 5px 13px;
+  font-size: 12px;
+  color: #6e6e73;
+  margin-left: auto;
+  white-space: nowrap;
+}
+.stats-badge b { color: #1d1d1f; font-weight: 600; }
+
+/* ── Layout ── */
+.layout { display: flex; height: calc(100vh - 53px); overflow: hidden; }
+
+/* ── Sidebar ── */
+.sidebar {
+  width: 320px;
+  min-width: 320px;
+  background: rgba(255,255,255,0.92);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  box-shadow: 2px 0 24px rgba(0,0,0,0.07);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  z-index: 10;
+  position: relative;
+}
+
+.drag-handle {
+  display: none;
+  justify-content: center;
+  align-items: center;
+  padding: 10px 0 6px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.handle-bar {
+  width: 36px; height: 4px;
+  background: rgba(0,0,0,0.18);
+  border-radius: 100px;
+}
+
+.sidebar-hd {
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(0,0,0,0.06);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.sidebar-title { font-size: 13px; font-weight: 600; color: #1d1d1f; }
+
+.sort-sel {
+  border: 1.5px solid rgba(0,0,0,0.1);
+  border-radius: 100px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  outline: none;
+  background: transparent;
+  color: #1d1d1f;
+  transition: border-color 0.2s;
+}
+.sort-sel:hover { border-color: rgba(0,0,0,0.2); }
+
+/* ── Progress ── */
+.prog-wrap {
+  padding: 10px 16px 8px;
+  border-bottom: 1px solid rgba(0,0,0,0.05);
+  flex-shrink: 0;
+}
+.prog-label {
+  font-size: 12px;
+  color: #6e6e73;
+  margin-bottom: 7px;
+  display: flex;
+  justify-content: space-between;
+}
+.prog-track {
+  height: 3px;
+  background: rgba(0,0,0,0.07);
+  border-radius: 100px;
+  overflow: hidden;
+}
+.prog-fill {
+  height: 100%;
+  background: linear-gradient(90deg,#f09433,#dc2743,#bc1888);
+  border-radius: 100px;
+  transition: width 0.5s ease;
+}
+
+/* ── Posts list ── */
+.posts-list { overflow-y: auto; flex: 1; padding: 6px 0 4px; }
+.posts-list::-webkit-scrollbar { width: 4px; }
+.posts-list::-webkit-scrollbar-track { background: transparent; }
+.posts-list::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.12); border-radius: 4px; }
+
+/* ── Post cards ── */
+.post-card {
+  display: flex;
+  gap: 10px;
+  margin: 3px 8px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  cursor: pointer;
+  transition: box-shadow 0.18s ease, transform 0.18s ease, background 0.18s ease;
+  background: white;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+}
+.post-card:hover {
+  box-shadow: 0 4px 18px rgba(0,0,0,0.09);
+  transform: translateY(-1px);
+}
+.post-card.active {
+  box-shadow: 0 4px 20px rgba(220,39,67,0.16);
+  outline: 1.5px solid rgba(220,39,67,0.22);
+}
+
+.thumb {
+  width: 56px; height: 56px;
+  border-radius: 10px;
+  flex-shrink: 0;
+  background: #f0f0f0;
+  object-fit: cover;
+}
+.thumb-ph {
+  width: 56px; height: 56px;
+  border-radius: 10px;
+  flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 22px;
+}
+.pinfo { flex: 1; min-width: 0; }
+.ploc {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: 3px;
+  color: #1d1d1f;
+}
+.pcap {
+  font-size: 12px;
+  color: #6e6e73;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  line-height: 1.4;
+  margin-bottom: 4px;
+}
+.pmeta { display: flex; gap: 8px; font-size: 11px; color: #a1a1a6; }
+.pmeta .pdate { margin-left: auto; }
+
+/* ── Skeleton cards ── */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.skeleton-card {
+  display: flex;
+  gap: 10px;
+  margin: 3px 8px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: white;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+}
+.skeleton-thumb {
+  width: 56px; height: 56px;
+  border-radius: 10px;
+  flex-shrink: 0;
+  background: linear-gradient(90deg,#f0f0f0 25%,#e4e4e4 50%,#f0f0f0 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s infinite linear;
+}
+.skeleton-info { flex: 1; display: flex; flex-direction: column; gap: 7px; justify-content: center; }
+.skeleton-line {
+  height: 11px;
+  border-radius: 100px;
+  background: linear-gradient(90deg,#f0f0f0 25%,#e4e4e4 50%,#f0f0f0 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s infinite linear;
+}
+
+/* ── Empty / Error ── */
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  gap: 10px;
+  color: #a1a1a6;
+  font-size: 14px;
+  padding: 30px;
+  text-align: center;
+  height: 100%;
+}
+.empty .ico { font-size: 40px; }
+.err-box {
+  background: rgba(255,59,48,0.06);
+  border: 1px solid rgba(255,59,48,0.18);
+  border-radius: 14px;
+  padding: 12px 14px;
+  margin: 8px 10px;
+  font-size: 13px;
+  color: #c62828;
+  line-height: 1.5;
+}
+.err-box b { display: block; margin-bottom: 2px; font-weight: 600; }
+
+/* ── Batch size selector (header) ── */
+.batch-sel {
+  border: 1.5px solid rgba(255,255,255,0.5);
+  border-radius: 100px;
+  padding: 7px 26px 7px 12px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #1d1d1f;
+  background: rgba(0,0,0,0.055);
+  cursor: pointer;
+  outline: none;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='11' height='7' viewBox='0 0 11 7'%3E%3Cpath d='M1 1l4.5 4.5L10 1' stroke='%23dc2743' stroke-width='1.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  transition: border-color 0.18s, background 0.18s;
+  flex-shrink: 0;
+}
+.batch-sel:focus { border-color: rgba(220,39,67,0.4); background: white; }
+
+/* ── Page nav ── */
+.page-nav-wrap {
+  padding: 10px 10px 12px;
+  border-top: 1px solid rgba(0,0,0,0.05);
+  display: none;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.btn-prev, .btn-next {
+  flex: 1;
+  border-radius: 100px;
+  padding: 10px 14px;
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.2s, transform 0.1s, background 0.18s;
+}
+.btn-prev {
+  background: transparent;
+  color: #dc2743;
+  border: 1.5px solid rgba(220,39,67,0.3);
+}
+.btn-prev:hover { background: rgba(220,39,67,0.05); border-color: rgba(220,39,67,0.5); }
+.btn-next {
+  background: linear-gradient(45deg,#f09433,#e6683c,#dc2743,#cc2366,#bc1888);
+  color: #fff;
+  border: none;
+}
+.btn-next:hover { opacity: 0.88; }
+.btn-prev:active, .btn-next:active { transform: scale(0.98); }
+.btn-prev:disabled, .btn-next:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+
+/* ── Map ── */
+#map { flex: 1; z-index: 1; }
+
+/* ── Leaflet popups ── */
+.leaflet-popup-content-wrapper {
+  border-radius: 20px;
+  padding: 0;
+  overflow: hidden;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.18), 0 4px 16px rgba(0,0,0,0.08);
+  border: none;
+}
+.leaflet-popup-content { margin: 0; width: 258px !important; }
+.leaflet-popup-tip { background: white; box-shadow: none; }
+.leaflet-popup-close-button {
+  top: 8px !important;
+  right: 8px !important;
+  width: 22px !important;
+  height: 22px !important;
+  background: rgba(0,0,0,0.06) !important;
+  border-radius: 50% !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  font-size: 14px !important;
+  color: #6e6e73 !important;
+  z-index: 5;
+}
+
+.pop-img { width: 100%; height: 155px; object-fit: cover; display: block; }
+.pop-ph { width: 100%; height: 155px; display: flex; align-items: center; justify-content: center; }
+.pop-body { padding: 12px 13px 13px; }
+.pop-user { display: flex; align-items: center; gap: 7px; margin-bottom: 6px; }
+.pop-av {
+  width: 24px; height: 24px;
+  border-radius: 50%;
+  background: linear-gradient(45deg,#f09433,#dc2743,#bc1888);
+  display: flex; align-items: center; justify-content: center;
+  color: #fff; font-size: 11px; font-weight: 700;
+}
+.pop-un { font-size: 13px; font-weight: 600; }
+.pop-loc { font-size: 12px; color: #dc2743; font-weight: 600; margin-bottom: 5px; }
+.pop-cap {
+  font-size: 12px;
+  line-height: 1.5;
+  margin-bottom: 8px;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  color: #3d3d3f;
+}
+.pop-ft {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-top: 1px solid rgba(0,0,0,0.06);
+  padding-top: 8px;
+  font-size: 11px;
+  color: #a1a1a6;
+}
+.pop-ft a {
+  font-size: 12px;
+  color: #dc2743;
+  font-weight: 600;
+  text-decoration: none;
+  background: rgba(220,39,67,0.07);
+  padding: 3px 9px;
+  border-radius: 100px;
+  transition: background 0.15s;
+}
+.pop-ft a:hover { background: rgba(220,39,67,0.14); }
+
+/* ── Map pins ── */
+@keyframes pinPop {
+  0%   { transform: rotate(-45deg) scale(0) translateY(6px); opacity: 0; }
+  70%  { transform: rotate(-45deg) scale(1.18) translateY(-2px); opacity: 1; }
+  100% { transform: rotate(-45deg) scale(1); opacity: 1; }
+}
+.pin {
+  width: 32px; height: 32px;
+  border-radius: 50% 50% 50% 0;
+  transform: rotate(-45deg);
+  border: 2.5px solid rgba(255,255,255,0.9);
+  box-shadow: 0 3px 10px rgba(0,0,0,0.25);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  transition: box-shadow 0.2s;
+}
+.pin.pin-pop { animation: pinPop 0.3s cubic-bezier(0.34,1.56,0.64,1) forwards; }
+.pin.pin-active {
+  transform: rotate(-45deg) scale(1.22);
+  box-shadow: 0 5px 18px rgba(0,0,0,0.4);
+}
+.pin-inner { transform: rotate(45deg); font-size: 13px; }
+
+/* ── Cluster icons ── */
+.cluster-bubble {
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  color: white;
+  font-weight: 700;
+  font-size: 13px;
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+  border: 2.5px solid rgba(255,255,255,0.9);
+  box-shadow: 0 3px 14px rgba(220,39,67,0.35);
+  background: linear-gradient(135deg,#f09433,#dc2743,#bc1888);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Responsive ── */
+@media (max-width: 680px) {
+  .sidebar { width: 280px; min-width: 280px; }
+}
+
+@media (max-width: 520px) {
+  .layout { flex-direction: column; position: relative; }
+  #map { flex: 1; height: 100%; }
+
+  .sidebar {
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    width: 100% !important;
+    min-width: 100% !important;
+    height: 72vh;
+    border-radius: 20px 20px 0 0;
+    transform: translateY(calc(100% - 72px));
+    transition: transform 0.38s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: 0 -8px 40px rgba(0,0,0,0.14);
+    z-index: 100;
+  }
+  .sidebar.sheet-open { transform: translateY(0); }
+  .drag-handle { display: flex; }
+  .stats-badge { display: none; }
+  .search-wrap { max-width: none; }
+}
+
+@media (max-width: 360px) {
+  header { padding: 10px 12px; gap: 8px; }
+  .logo { font-size: 18px; }
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">Insta<span>Mapped</span></div>
+  <div class="search-wrap">
+    <span class="at">@</span>
+    <input type="text" id="usernameInput" placeholder="instagram handle" autocomplete="off" autocorrect="off" spellcheck="false"/>
+    <select class="batch-sel" id="batchSizeSel">
+      <option value="10">10</option>
+      <option value="25">25</option>
+      <option value="50">50</option>
+    </select>
+    <button class="btn-primary" id="loadBtn" onclick="loadPosts()">Map It</button>
+  </div>
+  <div class="stats-badge" id="statsBadge" style="display:none"><b id="postCount">0</b> locations</div>
+</header>
+
+<div class="layout">
+  <div class="sidebar" id="sidebar">
+    <div class="drag-handle" id="dragHandle" onclick="toggleSheet()">
+      <div class="handle-bar"></div>
+    </div>
+    <div class="sidebar-hd">
+      <div class="sidebar-title" id="sidebarTitle">📍 Posts</div>
+      <select class="sort-sel" id="sortSel" onchange="currentPage=0;renderSidebar()">
+        <option value="date">Newest</option>
+        <option value="likes">Most liked</option>
+        <option value="az">A → Z</option>
+      </select>
+    </div>
+    <div id="progWrap" style="display:none" class="prog-wrap">
+      <div class="prog-label"><span id="progLabel">Working…</span></div>
+      <div class="prog-track"><div class="prog-fill" id="progFill" style="width:0%"></div></div>
+    </div>
+    <div id="postsList" class="posts-list">
+      <div class="empty"><div class="ico">🗺️</div><div>Enter a handle and tap <strong>Map It</strong></div></div>
+    </div>
+    <div class="page-nav-wrap" id="pageNavWrap">
+      <button class="btn-prev" id="prevBtn" onclick="goPrev()">← Prev</button>
+      <button class="btn-next" id="nextBtn" onclick="goNext()">Next →</button>
+    </div>
+  </div>
+  <div id="map"></div>
+</div>
+
+<script>
+let posts = [], markers = [], markerCluster = null, activeId = null, map = null;
+let currentUsername = '', nextCursor = null, currentPage = 0, loadingNext = false;
+
+function getBatchSize() {
+  const sel = document.getElementById('batchSizeSel');
+  return sel ? parseInt(sel.value, 10) : 10;
+}
+
+const THEMES = [
+  { kw:['mountain','mount','mt.','peak','summit','ridge'],           e:'⛰️', bg:'linear-gradient(135deg,#b2bec3,#636e72)' },
+  { kw:['national park','state park','wilderness','forest','preserve'], e:'🌲', bg:'linear-gradient(135deg,#00b894,#2ecc71)' },
+  { kw:['lake','reservoir','bay','harbor','beach','coast','sea','ocean'], e:'💧', bg:'linear-gradient(135deg,#74b9ff,#0984e3)' },
+  { kw:['trail','hike','appalachian','cdt','pct','path'],            e:'🥾', bg:'linear-gradient(135deg,#fdcb6e,#e17055)' },
+  { kw:['canyon','valley','falls','waterfall','gorge'],              e:'🏞️', bg:'linear-gradient(135deg,#fd79a8,#e17055)' },
+  { kw:['dc','d.c.','washington','new york','los angeles','boston','chicago','city','town'], e:'🏙️', bg:'linear-gradient(135deg,#636e72,#2d3436)' },
+];
+
+function theme(name) {
+  const l = name.toLowerCase();
+  for (const t of THEMES) if (t.kw.some(k => l.includes(k))) return { emoji:t.e, bg:t.bg };
+  return { emoji:'📍', bg:'linear-gradient(135deg,#a29bfe,#6c5ce7)' };
+}
+
+const fmt = n => !n ? '' : n>=1e6 ? (n/1e6).toFixed(1)+'M' : n>=1e3 ? (n/1e3).toFixed(1)+'K' : String(n);
+const fmtDate = iso => { try { return new Date(iso).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}); } catch { return ''; } };
+
+function isMobile() { return window.innerWidth <= 520; }
+
+function toggleSheet() {
+  document.getElementById('sidebar').classList.toggle('sheet-open');
+}
+
+function openSheet() {
+  if (isMobile()) document.getElementById('sidebar').classList.add('sheet-open');
+}
+
+function initMap() {
+  map = L.map('map',{zoomControl:true,scrollWheelZoom:true}).setView([38,-90],3);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
+    attribution:'© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+    maxZoom:19
+  }).addTo(map);
+
+  markerCluster = L.markerClusterGroup({
+    animate: true,
+    showCoverageOnHover: false,
+    spiderfyOnMaxZoom: true,
+    zoomToBoundsOnClick: true,
+    iconCreateFunction: function(cluster) {
+      const n = cluster.getChildCount();
+      const size = n < 10 ? 36 : n < 50 ? 42 : 48;
+      return L.divIcon({
+        className: '',
+        html: `<div class="cluster-bubble" style="width:${size}px;height:${size}px;font-size:${n<10?13:12}px">${n}</div>`,
+        iconSize: [size, size],
+        iconAnchor: [size/2, size/2]
+      });
+    }
+  });
+  markerCluster.addTo(map);
+}
+
+function pinIcon(emoji, bg, active=false, animate=false) {
+  return L.divIcon({
+    className: '',
+    html: `<div class="pin${active?' pin-active':''}${animate?' pin-pop':''}" style="background:${bg}"><div class="pin-inner">${emoji}</div></div>`,
+    iconSize: [32,32], iconAnchor: [16,32], popupAnchor: [0,-36]
+  });
+}
+
+function buildPopup(p) {
+  const t = theme(p.location.name);
+  const imgHtml = p.thumbnail
+    ? `<img class="pop-img" src="${p.thumbnail}" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"/><div class="pop-ph" style="background:${t.bg};font-size:48px;display:none">${t.emoji}</div>`
+    : `<div class="pop-ph" style="background:${t.bg};font-size:48px">${t.emoji}</div>`;
+  return `${imgHtml}<div class="pop-body">
+    <div class="pop-user"><div class="pop-av">${p.username[0].toUpperCase()}</div><div class="pop-un">@${p.username}</div></div>
+    <div class="pop-loc">📍 ${p.location.name}</div>
+    ${p.caption ? `<div class="pop-cap">${p.caption}</div>` : ''}
+    <div class="pop-ft"><span>${p.likes?'♥ '+fmt(p.likes)+' · ':''}${fmtDate(p.timestamp)}</span>${p.postUrl?`<a href="${p.postUrl}" target="_blank">View ↗</a>`:''}</div>
+  </div>`;
+}
+
+function addMarkers(newPosts) {
+  newPosts.forEach(p => {
+    const t = theme(p.location.name);
+    const m = L.marker([p.location.lat, p.location.lng], { icon: pinIcon(t.emoji, t.bg, false, true) });
+    m.bindPopup(buildPopup(p), { maxWidth:258, minWidth:258 });
+    m.on('click', () => setActive(p.id, false));
+    m.on('popupopen', () => setActive(p.id, false));
+    m._pid = p.id;
+    m._t = t;
+    markerCluster.addLayer(m);
+    markers.push(m);
+  });
+  if (markers.length) {
+    const bounds = markerCluster.getBounds();
+    if (bounds.isValid()) map.fitBounds(bounds.pad(0.2));
+  }
+}
+
+function skeletonHTML() {
+  const widths = ['65%','88%','45%'];
+  return Array(6).fill(0).map(() =>
+    `<div class="skeleton-card">
+      <div class="skeleton-thumb"></div>
+      <div class="skeleton-info">
+        ${widths.map(w => `<div class="skeleton-line" style="width:${w}"></div>`).join('')}
+      </div>
+    </div>`
+  ).join('');
+}
+
+function renderSidebar(clearProg=true) {
+  if (clearProg) document.getElementById('progWrap').style.display = 'none';
+  const sort = document.getElementById('sortSel').value;
+  const sorted = [...posts].sort((a,b) =>
+    sort==='likes' ? (b.likes||0)-(a.likes||0) :
+    sort==='az'    ? a.location.name.localeCompare(b.location.name) :
+                     new Date(b.timestamp)-new Date(a.timestamp)
+  );
+  const list = document.getElementById('postsList');
+  const navWrap = document.getElementById('pageNavWrap');
+  const prevBtn = document.getElementById('prevBtn');
+  const nextBtn = document.getElementById('nextBtn');
+
+  if (!sorted.length) {
+    list.innerHTML = `<div class="empty"><div class="ico">📭</div><div>No geotagged posts found.</div></div>`;
+    navWrap.style.display = 'none';
+    return;
+  }
+
+  const batchSize = getBatchSize();
+  const start = currentPage * batchSize;
+  const pagePosts = sorted.slice(start, start + batchSize);
+
+  list.innerHTML = pagePosts.map(p => {
+    const t = theme(p.location.name);
+    const th = p.thumbnail
+      ? `<img class="thumb" src="${p.thumbnail}" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"/><div class="thumb-ph" style="background:${t.bg};display:none">${t.emoji}</div>`
+      : `<div class="thumb-ph" style="background:${t.bg}">${t.emoji}</div>`;
+    return `<div class="post-card${activeId===p.id?' active':''}" onclick="setActive('${p.id}',true)" data-id="${p.id}">
+      ${th}
+      <div class="pinfo">
+        <div class="ploc">📍 ${p.location.name}</div>
+        <div class="pcap">${p.caption||'<em style="color:#ccc">No caption</em>'}</div>
+        <div class="pmeta">${p.likes?`<span>♥ ${fmt(p.likes)}</span>`:''}<span class="pdate">${fmtDate(p.timestamp)}</span></div>
+      </div>
+    </div>`;
+  }).join('');
+
+  list.scrollTop = 0;
+
+  const hasPrev = currentPage > 0;
+  const hasNext = (start + batchSize) < sorted.length || (nextCursor && nextCursor.length > 0);
+
+  if (hasPrev || hasNext) {
+    navWrap.style.display = 'flex';
+    prevBtn.style.display = hasPrev ? '' : 'none';
+    nextBtn.style.display = hasNext ? '' : 'none';
+    prevBtn.disabled = false;
+    nextBtn.disabled = false;
+    nextBtn.textContent = 'Next →';
+    prevBtn.textContent = '← Prev';
+  } else {
+    navWrap.style.display = 'none';
+  }
+}
+
+function setActive(id, flyTo) {
+  activeId = id;
+  renderSidebar(false);
+  document.querySelector(`.post-card[data-id="${id}"]`)?.scrollIntoView({behavior:'smooth',block:'nearest'});
+  markers.forEach(m => {
+    const active = m._pid === id;
+    m.setIcon(pinIcon(m._t.emoji, m._t.bg, active));
+    if (active) {
+      if (flyTo) {
+        markerCluster.zoomToShowLayer(m, () => setTimeout(() => m.openPopup(), 80));
+      } else {
+        m.openPopup();
+      }
+    }
+  });
+}
+
+async function loadPosts() {
+  const username = document.getElementById('usernameInput').value.trim().replace(/^@/,'');
+  if (!username) { document.getElementById('usernameInput').focus(); return; }
+
+  // Reset
+  markerCluster.clearLayers();
+  markers = [];
+  posts = [];
+  nextCursor = null;
+  currentUsername = username;
+  activeId = null;
+  currentPage = 0;
+  loadingNext = true; // suppress intermediate renders while filling first page
+
+  document.getElementById('statsBadge').style.display = 'none';
+  document.getElementById('sidebarTitle').textContent = `📍 @${username}`;
+  document.getElementById('postsList').innerHTML = skeletonHTML();
+  document.getElementById('pageNavWrap').style.display = 'none';
+
+  // Update URL for shareability
+  history.replaceState(null, '', '?u=' + encodeURIComponent(username));
+
+  await fetchPosts(username, null);
+
+  // Keep fetching until we have at least one full page
+  const bs = getBatchSize();
+  while (posts.length < bs && nextCursor && nextCursor.length > 0) {
+    await fetchPosts(currentUsername, nextCursor);
+  }
+
+  // All initial fetches done — render the full first page at once
+  loadingNext = false;
+  if (posts.length > 0) {
+    renderSidebar(true);
+    document.getElementById('statsBadge').style.display = '';
+    document.getElementById('postCount').textContent = posts.length;
+    openSheet();
+  }
+}
+
+async function fetchPosts(username, cursor) {
+  const btn       = document.getElementById('loadBtn');
+  const progWrap  = document.getElementById('progWrap');
+  const progFill  = document.getElementById('progFill');
+  const progLabel = document.getElementById('progLabel');
+  const badge     = document.getElementById('statsBadge');
+
+  btn.disabled = true;
+  let progTimer = null;
+
+  if (!cursor) {
+    btn.textContent = 'Working…';
+    progWrap.style.display = 'block';
+    progFill.style.width = '5%';
+    progLabel.textContent = 'Starting…';
+    let pct = 5;
+    progTimer = setInterval(() => {
+      if (pct < 88) {
+        pct += Math.random() * 2.5;
+        progFill.style.width = pct + '%';
+        if (pct > 15) progLabel.textContent = 'Scanning posts…';
+        if (pct > 45) progLabel.textContent = 'Finding locations…';
+        if (pct > 70) progLabel.textContent = 'Geocoding…';
+      }
+    }, 700);
+  } else {
+    const nextBtn = document.getElementById('nextBtn');
+    if (nextBtn) { nextBtn.disabled = true; nextBtn.textContent = 'Loading…'; }
+  }
+
+  try {
+    const body = { username };
+    if (cursor) body.cursor = cursor;
+
+    const res = await fetch('/api/posts', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(body)
+    });
+
+    if (progTimer) { clearInterval(progTimer); progTimer = null; }
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      if (!cursor) progWrap.style.display = 'none';
+      const list = document.getElementById('postsList');
+      if (res.status===401) list.innerHTML = `<div class="err-box"><b>🔒 Session Expired</b>The site's Instagram session has expired.</div>`;
+      else if (res.status===404) list.innerHTML = `<div class="err-box"><b>👤 Not Found</b>@${username} doesn't exist or is private.</div>`;
+      else if (res.status===429) list.innerHTML = `<div class="err-box"><b>⏳ In Progress</b>A search is already running. Give it a moment.</div>`;
+      else list.innerHTML = `<div class="err-box"><b>⚠️ Error</b>${err.error}</div>`;
+      return;
+    }
+
+    const data = await res.json();
+    const newPosts = data.posts || [];
+    nextCursor = data.nextCursor || null;
+    posts = [...posts, ...newPosts];
+
+    if (!cursor) {
+      progFill.style.width = '100%';
+      progLabel.textContent = loadingNext ? 'Loading more…' : `Done — ${posts.length} location${posts.length!==1?'s':''} found`;
+      setTimeout(() => {
+        addMarkers(newPosts);
+        if (!loadingNext) {
+          renderSidebar(true);
+          badge.style.display = '';
+          document.getElementById('postCount').textContent = posts.length;
+          openSheet();
+        }
+      }, 300);
+    } else {
+      addMarkers(newPosts);
+      if (!loadingNext) renderSidebar(false);
+      badge.style.display = '';
+      document.getElementById('postCount').textContent = posts.length;
+    }
+
+  } catch {
+    if (progTimer) { clearInterval(progTimer); progTimer = null; }
+    if (!cursor) progWrap.style.display = 'none';
+    document.getElementById('postsList').innerHTML = `<div class="err-box"><b>⚠️ Connection Error</b>Can't reach the server.</div>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Map It';
+  }
+}
+
+async function goNext() {
+  const batchSize = getBatchSize();
+  const nextPage = currentPage + 1;
+  const targetCount = (nextPage + 1) * batchSize;
+
+  // If we already have posts for the next page, just advance
+  if (nextPage * batchSize < posts.length) {
+    currentPage = nextPage;
+    renderSidebar(false);
+    return;
+  }
+
+  // Need to fetch more
+  if (!nextCursor || !nextCursor.length) return;
+
+  loadingNext = true;
+  const nextBtn = document.getElementById('nextBtn');
+  if (nextBtn) { nextBtn.disabled = true; nextBtn.textContent = 'Loading…'; }
+
+  while (posts.length < targetCount && nextCursor && nextCursor.length > 0) {
+    await fetchPosts(currentUsername, nextCursor);
+  }
+
+  loadingNext = false;
+  currentPage = nextPage;
+  renderSidebar(false);
+}
+
+function goPrev() {
+  if (currentPage > 0) {
+    currentPage--;
+    renderSidebar(false);
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  initMap();
+
+  document.getElementById('usernameInput').addEventListener('keydown', e => {
+    if (e.key === 'Enter') loadPosts();
+  });
+
+  // Auto-load from URL param
+  const urlUser = new URLSearchParams(window.location.search).get('u');
+  if (urlUser) {
+    document.getElementById('usernameInput').value = urlUser;
+    loadPosts();
+  }
+});
+</script>
+</body>
+</html>
