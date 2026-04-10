@@ -138,20 +138,28 @@ async function scrapeUser(username) {
     });
 
     await page.goto(`https://www.instagram.com/${username}/`, {
-      waitUntil: 'networkidle2', timeout: 30000
+      waitUntil: 'domcontentloaded', timeout: 30000
     });
-    await delay(1500);
+    await delay(2000);
 
-    // Check still logged in
-    const isLoggedIn = await page.evaluate(() =>
-      !document.querySelector('a[href="/accounts/login/"]') &&
-      !document.querySelector('input[name="username"]')
+    // URL-based login check — most reliable: invalid sessions redirect to /accounts/login/
+    const landedUrl = page.url();
+    console.log(`  Landed URL: ${landedUrl}`);
+    if (landedUrl.includes('/accounts/login') || landedUrl.includes('/accounts/emailsignup')) {
+      throw Object.assign(new Error('Instagram session expired or invalid.'), { status: 401 });
+    }
+
+    // Also check DOM as fallback
+    const hasLoginForm = await page.evaluate(() =>
+      !!document.querySelector('input[name="username"]') ||
+      document.title.toLowerCase().includes('log in')
     );
-    if (!isLoggedIn) throw Object.assign(new Error('Instagram session expired.'), { status: 401 });
+    if (hasLoginForm) throw Object.assign(new Error('Instagram session expired or invalid.'), { status: 401 });
 
     // Profile not found?
     const notFound = await page.evaluate(() =>
       document.title.toLowerCase().includes('page not found') ||
+      document.title.toLowerCase().includes("sorry, this page") ||
       !!document.querySelector('h2[class*="x1xmf6yo"]')
     );
     if (notFound) throw Object.assign(new Error(`@${username} not found or is private.`), { status: 404 });
