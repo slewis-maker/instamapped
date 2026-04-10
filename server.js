@@ -1,88 +1,62 @@
 /**
- * InstaMapped — Server
- * ─────────────────────────────────────────────────────
- * Scrapes geotagged posts from any Instagram profile using
- * your local Chrome installation (so you stay logged in).
- * Geocodes location names via OpenStreetMap Nominatim.
- * ─────────────────────────────────────────────────────
+ * InstaMapped — Server (Railway-compatible)
+ * ─────────────────────────────────────────────────────────
+ * Uses bundled Chromium (puppeteer), runs headless on Railway.
+ * Requires env var: INSTAGRAM_SESSION_ID  (your sessionid cookie)
+ *
+ * POST /api/posts  { username, cursor? }
+ *   → { posts: [...], nextCursor: string|null }
+ *
+ * On first call for a username: scrapes all geotagged posts,
+ * caches them for 10 min, returns first batch.
+ * cursor is the next start index as a string ("12", "24", …).
+ * ─────────────────────────────────────────────────────────
  */
 
-const express = require('express');
-const puppeteer = require('puppeteer-core');
-const path = require('path');
-const fs = require('fs');
+const express  = require('express');
+const puppeteer = require('puppeteer');
+const path     = require('path');
 
-const app = express();
+const app  = express();
 const PORT = process.env.PORT || 3000;
 
-// ── Chrome path detection ─────────────────────────────
-function getChromePath() {
-  if (process.platform === 'darwin') {
-    const paths = [
-      '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-      '/Applications/Chromium.app/Contents/MacOS/Chromium'
-    ];
-    return paths.find(p => fs.existsSync(p)) || paths[0];
-  }
-  if (process.platform === 'win32') {
-    const paths = [
-      'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-      'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe'
-    ];
-    return paths.find(p => fs.existsSync(p)) || paths[0];
-  }
-  // Linux
-  const paths = ['/usr/bin/google-chrome', '/usr/bin/chromium-browser', '/usr/bin/chromium'];
-  return paths.find(p => fs.existsSync(p)) || '/usr/bin/google-chrome';
-}
+app.use(express.json());
+app.use(express.static(path.join(__dirname, 'public')));
 
-// ── Persistent Chrome profile (so Instagram stays logged in) ──
-const PROFILE_DIR = path.join(__dirname, '.chrome-profile');
+// ── Config ────────────────────────────────────────────────
+const BATCH_SIZE  = 12;   // posts returned per request
+const CACHE_TTL   = 10 * 60 * 1000;  // 10 minutes
+const SESSION_ID  = process.env.INSTAGRAM_SESSION_ID || '';
 
-// ── Browser singleton ─────────────────────────────────
-let browser = null;
+// ── In-memory cache ───────────────────────────────────────
+// key: username  value: { posts: [], ts: Date.now() }
+const cache    = new Map();
+const scraping = new Set();  // usernames currently being scraped
 
-async function getBrowser() {
-  if (browser) {
-    try {
-      // Check it's still alive
-      await browser.pages();
-      return browser;
-    } catch {
-      browser = null;
-    }
-  }
-
-  console.log('🌐 Launching Chrome...');
-  browser = await puppeteer.launch({
-    executablePath: getChromePath(),
-    userDataDir: PROFILE_DIR,
-    headless: false,          // Visible so you can log in if needed
-    defaultViewport: null,
+// ── Browser factory ───────────────────────────────────────
+async function launchBrowser() {
+  return puppeteer.launch({
+    headless: true,
     args: [
       '--no-sandbox',
       '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-gpu',
       '--disable-blink-features=AutomationControlled'
     ]
   });
-
-  browser.on('disconnected', () => { browser = null; });
-  return browser;
 }
 
-// ── Geocode via OpenStreetMap Nominatim (free, no key) ─
+// ── Geocode via OpenStreetMap Nominatim ───────────────────
 const geocodeCache = new Map();
 
 async function geocode(locationName) {
   if (geocodeCache.has(locationName)) return geocodeCache.get(locationName);
-
   try {
     const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(locationName)}&format=json&limit=1`;
-    const res = await fetch(url, {
-      headers: { 'User-Agent': 'InstaMapped/1.0 (local tool)' }
-    });
+    const res  = await fetch(url, { headers: { 'User-Agent': 'InstaMapped/1.0' } });
     const data = await res.json();
-    if (data && data[0]) {
+    if (data?.[0]) {
       const coords = { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) };
       geocodeCache.set(locationName, coords);
       return coords;
@@ -93,199 +67,197 @@ async function geocode(locationName) {
   return null;
 }
 
-// ── Helper: delay ─────────────────────────────────────
+// ── Scrape a single post page ─────────────────────────────
 const delay = ms => new Promise(r => setTimeout(r, ms));
 
-// ── Scrape a single post page ─────────────────────────
 async function scrapePost(page, postUrl) {
   try {
     await page.goto(postUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
-    await delay(1000);
+    await delay(800);
 
     return await page.evaluate(() => {
-      // Location link (has a specific location ID, not the generic /explore/locations/)
       const locEl = Array.from(document.querySelectorAll('a[href*="/explore/locations/"]'))
         .find(el => el.href.match(/\/explore\/locations\/\d+\//));
 
-      const location = locEl
-        ? { name: locEl.innerText.trim(), href: locEl.href }
-        : null;
+      const location = locEl ? { name: locEl.innerText.trim(), href: locEl.href } : null;
 
-      // Caption — try several selectors Instagram uses
       const capSelectors = [
-        'div._a9zs h1',
-        'h1[dir="auto"]',
-        'div[class*="x1lliihq"] span[dir="auto"]',
-        'article span[dir="auto"]'
+        'div._a9zs h1', 'h1[dir="auto"]',
+        'div[class*="x1lliihq"] span[dir="auto"]', 'article span[dir="auto"]'
       ];
       let caption = '';
       for (const sel of capSelectors) {
         const el = document.querySelector(sel);
-        if (el && el.innerText && el.innerText.trim().length > 5) {
-          caption = el.innerText.trim().slice(0, 280);
-          break;
-        }
+        if (el?.innerText?.trim().length > 5) { caption = el.innerText.trim().slice(0, 280); break; }
       }
 
-      // Thumbnail from og:image meta tag
-      const ogImg = document.querySelector('meta[property="og:image"]');
+      const ogImg    = document.querySelector('meta[property="og:image"]');
       const thumbnail = ogImg ? ogImg.content : null;
 
-      // Likes from meta description or page content
-      const descMeta = document.querySelector('meta[name="description"]');
       let likes = null;
+      const descMeta = document.querySelector('meta[name="description"]');
       if (descMeta) {
         const m = descMeta.content.match(/([\d,]+)\s+likes?/i);
         if (m) likes = parseInt(m[1].replace(/,/g, ''));
       }
 
-      // Date from time element
-      const timeEl = document.querySelector('time[datetime]');
+      const timeEl   = document.querySelector('time[datetime]');
       const timestamp = timeEl ? timeEl.getAttribute('datetime') : new Date().toISOString();
 
       return { location, caption, thumbnail, likes, timestamp };
     });
   } catch (err) {
-    console.warn(`  ↳ Failed: ${postUrl} — ${err.message}`);
+    console.warn(`  ↳ Failed ${postUrl}: ${err.message}`);
     return null;
   }
 }
 
-// ── Serve static frontend ─────────────────────────────
-app.use(express.static(path.join(__dirname, 'public')));
+// ── Full scrape for a username → array of geotagged posts ─
+async function scrapeUser(username) {
+  if (!SESSION_ID) throw Object.assign(new Error('No Instagram session configured.'), { status: 401 });
 
-// ── API: GET /api/posts/:username ─────────────────────
-app.get('/api/posts/:username', async (req, res) => {
-  const username = req.params.username.replace(/^@/, '').trim();
-  if (!username) return res.status(400).json({ error: 'Username required' });
+  const browser = await launchBrowser();
+  const page    = await browser.newPage();
 
-  console.log(`\n📸 Fetching posts for @${username}...`);
-
-  let page;
   try {
-    const b = await getBrowser();
-    page = await b.newPage();
-
-    // Block images/media to speed up scraping
-    await page.setRequestInterception(true);
-    page.on('request', req => {
-      const type = req.resourceType();
-      if (['image', 'media', 'font'].includes(type)) {
-        req.abort();
-      } else {
-        req.continue();
-      }
+    // Inject session cookie so we're "logged in"
+    await page.setCookie({
+      name:   'sessionid',
+      value:  SESSION_ID,
+      domain: '.instagram.com',
+      path:   '/',
+      secure: true,
+      httpOnly: true
     });
 
-    // Visit profile page
+    // Block images/media to speed things up
+    await page.setRequestInterception(true);
+    page.on('request', req => {
+      if (['image', 'media', 'font'].includes(req.resourceType())) req.abort();
+      else req.continue();
+    });
+
     await page.goto(`https://www.instagram.com/${username}/`, {
-      waitUntil: 'networkidle2',
-      timeout: 30000
+      waitUntil: 'networkidle2', timeout: 30000
     });
     await delay(1500);
 
-    // Check for login wall
-    const isLoggedIn = await page.evaluate(() => {
-      return !document.querySelector('a[href="/accounts/login/"]') &&
-             !document.querySelector('input[name="username"]');
-    });
+    // Check still logged in
+    const isLoggedIn = await page.evaluate(() =>
+      !document.querySelector('a[href="/accounts/login/"]') &&
+      !document.querySelector('input[name="username"]')
+    );
+    if (!isLoggedIn) throw Object.assign(new Error('Instagram session expired.'), { status: 401 });
 
-    if (!isLoggedIn) {
-      await page.close();
-      return res.status(401).json({
-        error: 'Instagram login required. A Chrome window should have opened — please log in, then try again.'
-      });
-    }
-
-    // Check profile exists
+    // Profile not found?
     const notFound = await page.evaluate(() =>
       document.title.toLowerCase().includes('page not found') ||
       !!document.querySelector('h2[class*="x1xmf6yo"]')
     );
-    if (notFound) {
-      await page.close();
-      return res.status(404).json({ error: `Profile @${username} not found.` });
-    }
+    if (notFound) throw Object.assign(new Error(`@${username} not found or is private.`), { status: 404 });
 
-    // Scroll down to load more posts (3 scrolls ≈ 27–36 posts)
-    for (let i = 0; i < 3; i++) {
-      await page.evaluate(() => window.scrollBy(0, 2000));
+    // Scroll to load up to ~48 posts
+    for (let i = 0; i < 4; i++) {
+      await page.evaluate(() => window.scrollBy(0, 2500));
       await delay(1200);
     }
 
-    // Collect unique post URLs belonging to this user
-    const postUrls = await page.evaluate((uname) => {
-      const links = Array.from(document.querySelectorAll(`a[href*="/p/"]`))
-        .map(a => a.href)
-        .filter(h => h.includes('/p/'))
-        .filter((v, i, arr) => arr.indexOf(v) === i)
-        .slice(0, 36);
-      return links;
-    }, username);
+    const postUrls = await page.evaluate(() =>
+      [...new Set(
+        Array.from(document.querySelectorAll('a[href*="/p/"]'))
+          .map(a => a.href)
+          .filter(h => h.includes('/p/'))
+      )].slice(0, 48)
+    );
 
-    console.log(`  Found ${postUrls.length} posts — checking for location tags...`);
+    console.log(`  Found ${postUrls.length} post URLs for @${username}`);
 
-    // Scrape each post
     const posts = [];
     for (let i = 0; i < postUrls.length; i++) {
-      const url = postUrls[i];
-      process.stdout.write(`  [${i + 1}/${postUrls.length}] ${url.split('/p/')[1]?.replace('/', '')} `);
-
+      const url  = postUrls[i];
       const data = await scrapePost(page, url);
-      if (!data || !data.location) {
-        process.stdout.write('(no location)\n');
-        continue;
-      }
-
-      process.stdout.write(`→ ${data.location.name} — geocoding...`);
+      if (!data?.location) continue;
 
       const coords = await geocode(data.location.name);
-      if (!coords) {
-        process.stdout.write(' (geocode failed)\n');
-        continue;
-      }
-
-      process.stdout.write(` ✓ (${coords.lat.toFixed(3)}, ${coords.lng.toFixed(3)})\n`);
+      if (!coords) continue;
 
       posts.push({
-        id: url.split('/p/')[1]?.replace('/', '') || String(i),
-        postUrl: url,
+        id:       url.split('/p/')[1]?.replace('/', '') || String(i),
+        postUrl:  url,
         username,
-        location: {
-          name: data.location.name,
-          lat: coords.lat,
-          lng: coords.lng
-        },
-        caption: data.caption || '',
+        location: { name: data.location.name, lat: coords.lat, lng: coords.lng },
+        caption:  data.caption || '',
         thumbnail: data.thumbnail,
-        likes: data.likes,
-        comments: null,
+        likes:    data.likes,
         timestamp: data.timestamp
       });
 
-      // Small polite delay between requests
-      await delay(400);
+      await delay(300);
     }
 
-    await page.close();
+    console.log(`  ✅ @${username}: ${posts.length} geotagged posts`);
+    return posts;
 
-    console.log(`  ✅ Done: ${posts.length} geotagged posts found.\n`);
-    res.json({ username, posts });
+  } finally {
+    await browser.close();
+  }
+}
+
+// ── POST /api/posts ───────────────────────────────────────
+app.post('/api/posts', async (req, res) => {
+  const { username: raw, cursor } = req.body || {};
+  const username = (raw || '').replace(/^@/, '').trim();
+  if (!username) return res.status(400).json({ error: 'username is required' });
+
+  // Reject if another scrape is in-flight for the same user
+  if (!cursor && scraping.has(username)) {
+    return res.status(429).json({ error: 'Already scraping this user, please wait.' });
+  }
+
+  try {
+    // Return from cache if fresh
+    const cached = cache.get(username);
+    const now    = Date.now();
+
+    let allPosts;
+    if (cached && (now - cached.ts) < CACHE_TTL) {
+      allPosts = cached.posts;
+    } else {
+      // Need a fresh scrape
+      scraping.add(username);
+      try {
+        allPosts = await scrapeUser(username);
+        cache.set(username, { posts: allPosts, ts: now });
+      } finally {
+        scraping.delete(username);
+      }
+    }
+
+    // Paginate
+    const start      = cursor ? parseInt(cursor, 10) : 0;
+    const batch      = allPosts.slice(start, start + BATCH_SIZE);
+    const nextStart  = start + BATCH_SIZE;
+    const nextCursor = nextStart < allPosts.length ? String(nextStart) : null;
+
+    return res.json({ posts: batch, nextCursor });
 
   } catch (err) {
-    console.error('❌ Error:', err.message);
-    if (page) {
-      try { await page.close(); } catch {}
-    }
-    res.status(500).json({ error: err.message });
+    const status = err.status || 500;
+    console.error(`❌ /api/posts error (${status}):`, err.message);
+    return res.status(status).json({ error: err.message });
   }
 });
 
-// ── Health check ──────────────────────────────────────
-app.get('/api/health', (_, res) => res.json({ status: 'ok' }));
+// ── Health check ──────────────────────────────────────────
+app.get('/api/health', (_, res) => res.json({
+  status: 'ok',
+  session: SESSION_ID ? 'configured' : 'missing'
+}));
 
-// ── Start ─────────────────────────────────────────────
+// ── Start ─────────────────────────────────────────────────
 app.listen(PORT, () => {
-  console.log(`\n🗺️  InstaMapped is running!`);
-  console.log(`   Open: http://localhost:${PORT}\n`);
+  console.log(`\n🗺️  InstaMapped running on port ${PORT}`);
+  if (!SESSION_ID) {
+    console.warn('⚠️  INSTAGRAM_SESSION_ID not set — API calls will return 401');
+  }
 });
