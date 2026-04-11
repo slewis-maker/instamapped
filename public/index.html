@@ -304,26 +304,20 @@ header {
 }
 .err-box b { display: block; margin-bottom: 2px; font-weight: 600; }
 
-/* ── Batch size selector (header) ── */
-.batch-sel {
-  border: 1.5px solid rgba(255,255,255,0.5);
-  border-radius: 100px;
-  padding: 7px 26px 7px 12px;
-  font-size: 13px;
-  font-weight: 500;
-  color: #1d1d1f;
-  background: rgba(0,0,0,0.055);
-  cursor: pointer;
-  outline: none;
-  appearance: none;
-  -webkit-appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='11' height='7' viewBox='0 0 11 7'%3E%3Cpath d='M1 1l4.5 4.5L10 1' stroke='%23dc2743' stroke-width='1.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 10px center;
-  transition: border-color 0.18s, background 0.18s;
-  flex-shrink: 0;
+/* ── Batch size toggle buttons (header) ── */
+.batch-btns { display: flex; gap: 3px; flex-shrink: 0; background: rgba(0,0,0,0.055); border-radius: 100px; padding: 3px; }
+.batch-btn {
+  border: none; border-radius: 100px; padding: 5px 12px;
+  font-size: 13px; font-weight: 500; color: #6e6e73;
+  background: transparent; cursor: pointer;
+  transition: background 0.15s, color 0.15s, box-shadow 0.15s;
+  white-space: nowrap;
 }
-.batch-sel:focus { border-color: rgba(220,39,67,0.4); background: white; }
+.batch-btn.active {
+  background: white; color: #1d1d1f; font-weight: 600;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.12);
+}
+.batch-btn:not(.active):hover { color: #1d1d1f; }
 
 /* ── Page nav ── */
 .page-nav-wrap {
@@ -506,11 +500,10 @@ header {
   <div class="search-wrap">
     <span class="at">@</span>
     <input type="text" id="usernameInput" placeholder="instagram handle" autocomplete="off" autocorrect="off" spellcheck="false"/>
-    <select class="batch-sel" id="batchSizeSel">
-      <option value="10">10</option>
-      <option value="25">25</option>
-      <option value="50">50</option>
-    </select>
+    <div class="batch-btns">
+      <button class="batch-btn active" data-val="10" onclick="setBatch(this)">10</button>
+      <button class="batch-btn" data-val="25" onclick="setBatch(this)">25</button>
+    </div>
     <button class="btn-primary" id="loadBtn" onclick="loadPosts()">Map It</button>
   </div>
   <div class="stats-badge" id="statsBadge" style="display:none"><b id="postCount">0</b> locations</div>
@@ -548,9 +541,14 @@ header {
 let posts = [], markers = [], markerCluster = null, activeId = null, map = null;
 let currentUsername = '', nextCursor = null, currentPage = 0, loadingNext = false;
 
+function setBatch(el) {
+  document.querySelectorAll('.batch-btn').forEach(b => b.classList.remove('active'));
+  el.classList.add('active');
+  currentPage = 0;
+}
 function getBatchSize() {
-  const sel = document.getElementById('batchSizeSel');
-  return sel ? parseInt(sel.value, 10) : 10;
+  const btn = document.querySelector('.batch-btn.active');
+  return btn ? parseInt(btn.dataset.val, 10) : 10;
 }
 
 const THEMES = [
