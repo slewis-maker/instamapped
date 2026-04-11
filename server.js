@@ -126,7 +126,7 @@ async function scrapePost(page, postUrl) {
 
     return await page.evaluate(() => {
       const locEl = Array.from(document.querySelectorAll('a[href*="/explore/locations/"]'))
-        .find(el => el.href.match(/\/explore\/locations\/\d+\/$/));
+        .find(el => el.href.match(/\/explore\/locations\/\d+/));
 
       const location = locEl ? { name: locEl.innerText.trim(), href: locEl.href } : null;
 
