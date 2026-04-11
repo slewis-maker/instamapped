@@ -67,6 +67,55 @@ async function geocode(locationName) {
   return null;
 }
 
+// ── Get coords from Instagram's own location page (accurate) ──
+// Falls back to Nominatim if Instagram page has no coords.
+async function getInstagramCoords(page, locationHref) {
+  if (!locationHref) return null;
+  if (geocodeCache.has(locationHref)) return geocodeCache.get(locationHref);
+
+  try {
+    await page.goto(locationHref, { waitUntil: 'domcontentloaded', timeout: 15000 });
+    await delay(600);
+
+    const coords = await page.evaluate(() => {
+      const src = document.documentElement.innerHTML;
+
+      // Instagram bakes "lat": and "lng": directly into page JSON
+      const latM = src.match(/"lat"\s*:\s*([-\d.]+)/);
+      const lngM = src.match(/"lng"\s*:\s*([-\d.]+)/);
+      if (latM && lngM) {
+        const lat = parseFloat(latM[1]);
+        const lng = parseFloat(lngM[1]);
+        if (lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180 && (lat !== 0 || lng !== 0)) {
+          return { lat, lng };
+        }
+      }
+
+      // Try JSON-LD structured data
+      for (const s of document.querySelectorAll('script[type="application/ld+json"]')) {
+        try {
+          const d = JSON.parse(s.textContent);
+          const geo = d.geo || d?.['@graph']?.[0]?.geo;
+          if (geo?.latitude) return { lat: parseFloat(geo.latitude), lng: parseFloat(geo.longitude) };
+        } catch {}
+      }
+
+      return null;
+    });
+
+    if (coords) {
+      const label = locationHref.split('/').filter(Boolean).pop();
+      console.log(`  📍 IG coords for "${label}": (${coords.lat.toFixed(4)}, ${coords.lng.toFixed(4)})`);
+      geocodeCache.set(locationHref, coords);
+      return coords;
+    }
+    console.log(`  ↳ No coords on IG location page, falling back to Nominatim`);
+  } catch (err) {
+    console.warn(`  ↳ IG location page failed: ${err.message}`);
+  }
+  return null;
+}
+
 // ── Scrape a single post page ─────────────────────────────
 const delay = ms => new Promise(r => setTimeout(r, ms));
 
@@ -77,7 +126,7 @@ async function scrapePost(page, postUrl) {
 
     return await page.evaluate(() => {
       const locEl = Array.from(document.querySelectorAll('a[href*="/explore/locations/"]'))
-        .find(el => el.href.match(/\/explore\/locations\/\d+\//));
+        .find(el => el.href.match(/\/explore\/locations\/\d+\/$/));
 
       const location = locEl ? { name: locEl.innerText.trim(), href: locEl.href } : null;
 
@@ -186,7 +235,9 @@ async function scrapeUser(username) {
       const data = await scrapePost(page, url);
       if (!data?.location) continue;
 
-      const coords = await geocode(data.location.name);
+      // Instagram location pages have exact GPS — much more accurate than Nominatim
+      const coords = await getInstagramCoords(page, data.location.href)
+                  || await geocode(data.location.name);
       if (!coords) continue;
 
       posts.push({
